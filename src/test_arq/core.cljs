@@ -14,15 +14,17 @@
 (defn init-app [root-component model-constructor]
   (let [initial-model (model-constructor)
         node (.getElementById js/document "app")
-        build-root (fn [model] (rum/mount (root-component util/signal model) node))
+        build-root (fn [model]
+                     (rum/mount (root-component util/signal model) node))
         component (build-root initial-model)]
 
     (-> util/event-stream
         (util/model-changes-stream initial-model)
+        #_(rx/retry))
         (rx/subscribe build-root
                       #(util/signal (update/Error. %))
                       #(.log js/console "end: " %))
-        #_(rx/retry))))
+        ))
 
 (init-app view/root model/init)
 

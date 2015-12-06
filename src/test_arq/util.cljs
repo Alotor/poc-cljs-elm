@@ -5,15 +5,20 @@
 
 ;;; process-update :: Event -> Model -> Model
 (defprotocol UpdateEvent
-  (process-update [event app]))
+  (process-update [event model]))
 
-(defn update-event? [e] (satisfies? UpdateEvent e))
+(defn update? [e] (satisfies? UpdateEvent e))
 
 ;;; process-watch  :: Event -> Stream[Event]
-(defprotocol SourceEvent
-  (process-watch [event]))
+(defprotocol WatchEvent
+  (process-watch [event model]))
 
-(defn source-event? [e] (satisfies? SourceEvent e))
+(defn watch? [e] (satisfies? WatchEvent e))
+
+(defprotocol EffectEvent
+  (process-effect [event model]))
+
+(defn effect? [e] (satisfies? EffectEvent e))
 
 
 ;; Defines model stream
@@ -24,14 +29,20 @@
     (rx/push! event-stream event)))
 
 (defn model-changes-stream [event-stream init-model]
-  (let #_[source-changes (->> event-stream
-                              (rx/filter source-event?)
-                              (rx/flat-map process-watch))
+  (let [update-stream (->> event-stream (rx/filter update?))
+        watch-stream  (->> event-stream (rx/filter watch?))
+        effect-stream (->> event-stream (rx/filter effect?))
+        model-stream  (->> model-changes
+                           (rx/scan #(process-update %2 %1) init-model))]
 
-          model-changes (rx/merge (->> event-stream
-                                       (rx/filter update-event?))
-                                  source-changes)]
-       [model-changes (->> event-stream
-                           (rx/filter update-event?))]
-       (->> model-changes
-            (rx/scan #(process-update %2 %1) init-model))))
+    ;; Process effects: combine with the latest model to process the new effect
+    (-> (rx/with-latest-from effect-stream model-stream vector)
+        (rx/subscribe (fn [[event model]] (process-effect event model))))
+
+    ;; Process event sources: combine with the latest model and the result will be
+    ;; pushed to the event-stream bus
+    (as-> (rx/with-latest-from effect-stream model-stream vector) $
+          (rx/flat-map (fn [[event model]] (process-watch event model)) $)
+          (rx/subscribe $ signal #(signal (Error. %))))
+
+    model-stream))
