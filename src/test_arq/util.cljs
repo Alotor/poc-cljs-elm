@@ -24,25 +24,35 @@
 ;; Defines model stream
 (defonce event-stream (rx/bus))
 
+(defn publish! [event]
+  (rx/push! event-stream event))
+
 (defn signal [event]
-  (fn [e]
-    (rx/push! event-stream event)))
+  (fn [e] (publish! event)))
+
+(defn noop [_])
 
 (defn model-changes-stream [event-stream init-model]
   (let [update-stream (->> event-stream (rx/filter update?))
         watch-stream  (->> event-stream (rx/filter watch?))
         effect-stream (->> event-stream (rx/filter effect?))
-        model-stream  (->> model-changes
+        model-stream  (->> update-stream
                            (rx/scan #(process-update %2 %1) init-model))]
 
     ;; Process effects: combine with the latest model to process the new effect
-    (-> (rx/with-latest-from effect-stream model-stream vector)
-        (rx/subscribe (fn [[event model]] (process-effect event model))))
+    (as-> effect-stream $
+          (rx/with-latest-from vector model-stream $)
+          (rx/subscribe $ (fn [[event model]] (process-effect event model))
+                          #(publish! %)
+                          (fn [] (println "End effect stream"))))
 
     ;; Process event sources: combine with the latest model and the result will be
     ;; pushed to the event-stream bus
-    (as-> (rx/with-latest-from effect-stream model-stream vector) $
+    (as-> watch-stream $
+          (rx/with-latest-from vector model-stream $)
           (rx/flat-map (fn [[event model]] (process-watch event model)) $)
-          (rx/subscribe $ signal #(signal (Error. %))))
+          (rx/subscribe $ publish!
+                          publish!
+                          (fn [] (println "End stream"))))
 
     model-stream))
