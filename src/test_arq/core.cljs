@@ -21,10 +21,7 @@
     (-> util/event-stream
         (util/model-changes-stream initial-model)
         (rx/retry)
-        (rx/subscribe build-root
-                      #(.log js/console %)
-                      #_(util/signal (update/Error. %))
-                      #(.log js/console "end: " %)))))
+        (rx/subscribe build-root))))
 
 (init-app view/root model/init)
 
